@@ -120,22 +120,21 @@ async function startBot() {
       process.exit(1);
     }
 
-    // Request pairing code once the socket signals it is ready
-    sock.ev.on('connection.update', async (update) => {
-      if (update.connection === 'connecting' && !pairingRequested) {
-        pairingRequested = true;
-        try {
-          const code = await sock.requestPairingCode(phoneNumber);
-          console.log('\n==============================');
-          console.log(`Your WhatsApp pairing code: ${code}`);
-          console.log('Open WhatsApp > Linked Devices > Link a Device > Link with phone number instead');
-          console.log('Enter this code there.');
-          console.log('==============================\n');
-        } catch (err) {
-          console.error('Failed to request pairing code:', err.message);
-        }
+    // Request pairing code after the WebSocket connection is established
+    setTimeout(async () => {
+      if (pairingRequested) return;
+      pairingRequested = true;
+      try {
+        const code = await sock.requestPairingCode(phoneNumber);
+        console.log('\n==============================');
+        console.log(`Your WhatsApp pairing code: ${code}`);
+        console.log('Open WhatsApp > Linked Devices > Link a Device > Link with phone number instead');
+        console.log('Enter this code there.');
+        console.log('==============================\n');
+      } catch (err) {
+        console.error('Failed to request pairing code:', err.message);
       }
-    });
+    }, 5000);
   }
 
   sock.ev.on('connection.update', (update) => {
