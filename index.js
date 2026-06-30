@@ -5,6 +5,7 @@ const {
   useMultiFileAuthState,
   DisconnectReason,
   downloadMediaMessage,
+  Browsers,
 } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const axios = require('axios');
@@ -102,7 +103,7 @@ async function startBot() {
     auth: state,
     logger,
     printQRInTerminal: false,
-    browser: ['Plant ID Bot', 'Chrome', '1.0.0'],
+    browser: Browsers.macOS('Chrome'),
   });
 
   // ---- Pairing code login (instead of QR) ----
