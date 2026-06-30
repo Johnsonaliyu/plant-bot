@@ -72,6 +72,33 @@ async function callNvidia(messages) {
   return data.choices?.[0]?.message?.content?.trim();
 }
 
+const QUESTION_SYSTEM_PROMPT = `You are a plant expert assistant for a WhatsApp bot called Plant Identifier.
+Your job is to answer questions about plants only — topics like plant species, care, growth, diseases, soil, watering, pruning, identification, uses, habitats, and gardening.
+
+Rules:
+- If the question is about plants or gardening in any way, answer it accurately and helpfully in plain conversational language. Keep responses concise (under 200 words).
+- If the question is NOT about plants or gardening, respond with exactly this message and nothing else:
+  "I'm only able to help with plant-related questions. 🌿 Send me a plant photo to identify it, or ask me anything about plants, gardening, or plant care!"
+- Do not use markdown headers. Short paragraphs are fine.`;
+
+async function callAI(messages) {
+  try {
+    const result = await callGroq(messages);
+    if (result) return result;
+  } catch (err) {
+    console.error('Groq failed:', err.response?.data?.error?.message || err.message);
+  }
+
+  try {
+    const result = await callNvidia(messages);
+    if (result) return result;
+  } catch (err) {
+    console.error('Nvidia NIM failed:', err.response?.data?.error?.message || err.message);
+  }
+
+  return null;
+}
+
 /**
  * Generates a natural-language plant description.
  * Tries Groq first, falls back to Nvidia NIM if Groq fails or is unconfigured.
@@ -83,21 +110,23 @@ async function generateDescription(plantInfo) {
     { role: 'user', content: buildUserPrompt(plantInfo) },
   ];
 
-  try {
-    const result = await callGroq(messages);
-    if (result) return { text: result, source: 'Groq' };
-  } catch (err) {
-    console.error('Groq description failed:', err.response?.data?.error?.message || err.message);
-  }
-
-  try {
-    const result = await callNvidia(messages);
-    if (result) return { text: result, source: 'Nvidia NIM' };
-  } catch (err) {
-    console.error('Nvidia description failed:', err.response?.data?.error?.message || err.message);
-  }
-
+  const result = await callAI(messages);
+  if (result) return { text: result };
   return null;
 }
 
-module.exports = { generateDescription };
+/**
+ * Answers a plant-related question.
+ * Politely declines if the question is not about plants.
+ * Returns null if both AI providers fail.
+ */
+async function answerQuestion(question) {
+  const messages = [
+    { role: 'system', content: QUESTION_SYSTEM_PROMPT },
+    { role: 'user', content: question },
+  ];
+
+  return callAI(messages);
+}
+
+module.exports = { generateDescription, answerQuestion };

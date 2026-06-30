@@ -11,7 +11,7 @@ const pino = require('pino');
 const axios = require('axios');
 const FormData = require('form-data');
 const readline = require('readline');
-const { generateDescription } = require('./ai');
+const { generateDescription, answerQuestion } = require('./ai');
 
 const PLANTNET_API_KEY = process.env.PLANTNET_API_KEY;
 const PLANTNET_PROJECT = process.env.PLANTNET_PROJECT || 'all';
@@ -219,11 +219,34 @@ async function startBot() {
         const text =
           msg.message.conversation || msg.message.extendedTextMessage?.text || '';
 
-        if (text) {
+        if (!text) continue;
+
+        const isGreeting = /^(hi+|hello+|hey+|howdy|good\s*(morning|afternoon|evening|day|night)|what'?s up|sup|greetings|yo|hiya|helo|hy|hei|hai)\b/i.test(text.trim());
+
+        if (isGreeting) {
+          const name = msg.pushName ? msg.pushName.split(' ')[0] : 'there';
+          const intro =
+            `🌿 Good day, *${name}!*\n\n` +
+            `I'm *Plant Identifier*, built by *Aliu Johnson Temitope*, a fellow of the *3MTT Airtel NextGen Program* (Fellow ID: FE/23/24184818).\n\n` +
+            `*Here's what I can do for you:*\n` +
+            `📸 *Identify plants* — Send me a clear photo of any plant (leaf, flower, fruit, or bark) and I'll tell you exactly what it is.\n` +
+            `📖 *Plant details* — Get the scientific name, common names, family, and confidence score.\n` +
+            `🌱 *Care & uses* — Learn about a plant's habitat, medicinal or culinary uses, and care tips.\n` +
+            `💬 *Plant Q&A* — Ask me any question about plants, gardening, or plant care and I'll answer accurately.\n\n` +
+            `_Just send a plant photo or type your plant question to get started!_ 🌻`;
+
+          await sock.sendMessage(remoteJid, { text: intro });
+          continue;
+        }
+
+        // Answer plant questions or decline off-topic ones
+        await sock.sendPresenceUpdate('composing', remoteJid);
+        const answer = await answerQuestion(text);
+        if (answer) {
+          await sock.sendMessage(remoteJid, { text: answer });
+        } else {
           await sock.sendMessage(remoteJid, {
-            text:
-              '🌱 Hi! Send me a clear photo of a plant (leaf, flower, or fruit) ' +
-              'and I will identify it and tell you about it.',
+            text: "I'm only able to help with plant-related questions. 🌿 Send me a plant photo to identify it, or ask me anything about plants, gardening, or plant care!",
           });
         }
       } catch (err) {
