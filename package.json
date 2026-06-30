@@ -1,0 +1,17 @@
+{
+  "name": "whatsapp-plant-id-bot",
+  "version": "1.0.0",
+  "description": "WhatsApp bot that identifies plants from photos using PlantNet API",
+  "main": "index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.9",
+    "axios": "^1.7.7",
+    "form-data": "^4.0.0",
+    "pino": "^9.4.0",
+    "dotenv": "^16.4.5"
+  }
+}
