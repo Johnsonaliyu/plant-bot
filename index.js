@@ -59,20 +59,27 @@ async function identifyDisease(imageBuffer) {
   const form = new FormData();
   form.append('images', imageBuffer, { filename: 'plant.jpg', contentType: 'image/jpeg' });
 
-  const url = `https://my-api.plantnet.org/v2/diseases/identify?api-key=${PLANTNET_API_KEY}&include-related-images=false&no-reject=true&nb-results=3`;
+  const url = `https://my-api.plantnet.org/v2/diseases/identify?api-key=${PLANTNET_API_KEY}&include-related-images=false&no-reject=true&nb-results=5`;
 
-  const { data } = await axios.post(url, form, {
-    headers: form.getHeaders(),
-    timeout: 20000,
-  });
+  try {
+    const { data } = await axios.post(url, form, {
+      headers: form.getHeaders(),
+      timeout: 20000,
+    });
 
-  if (!data.results || data.results.length === 0) return null;
+    console.log('Disease API raw results:', JSON.stringify(data.results?.slice(0, 3)));
 
-  return data.results.map((r) => ({
-    score: (r.score * 100).toFixed(1),
-    name: r.name,
-    description: r.description || null,
-  }));
+    if (!data.results || data.results.length === 0) return null;
+
+    return data.results.map((r) => ({
+      score: (r.score * 100).toFixed(1),
+      name: r.name,
+      description: r.description || null,
+    }));
+  } catch (err) {
+    console.error('Disease API error:', err.response?.status, err.response?.data || err.message);
+    return null;
+  }
 }
 
 // ---------- Format reply text ----------
@@ -112,7 +119,7 @@ function formatDiseaseResult(diseases) {
   if (!diseases || diseases.length === 0) return null;
 
   const top = diseases[0];
-  if (parseFloat(top.score) < 20) return null; // skip if confidence too low
+  if (parseFloat(top.score) < 5) return null; // skip only if extremely low confidence
 
   let reply = `\n🦠 *Disease Check:*\n`;
   reply += `*Most likely:* ${top.description || top.name} _(${top.score}% confidence)_\n`;
