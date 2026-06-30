@@ -33,8 +33,6 @@ function ask(question) {
 // ---------- PlantNet identification ----------
 async function identifyPlant(imageBuffer) {
   const form = new FormData();
-  // "organs" tells PlantNet what part of the plant is in the photo.
-  // "auto" lets PlantNet figure it out; you can also hint with 'leaf', 'flower', 'fruit', 'bark'.
   form.append('images', imageBuffer, { filename: 'plant.jpg', contentType: 'image/jpeg' });
   form.append('organs', 'auto');
 
@@ -45,17 +43,35 @@ async function identifyPlant(imageBuffer) {
     timeout: 20000,
   });
 
-  if (!data.results || data.results.length === 0) {
-    return null;
-  }
+  if (!data.results || data.results.length === 0) return null;
 
-  // Take the top 3 candidate matches
   return data.results.slice(0, 3).map((r) => ({
     score: (r.score * 100).toFixed(1),
     scientificName: r.species.scientificNameWithoutAuthor,
     commonNames: r.species.commonNames || [],
     family: r.species.family?.scientificNameWithoutAuthor,
     genus: r.species.genus?.scientificNameWithoutAuthor,
+  }));
+}
+
+// ---------- PlantNet disease identification ----------
+async function identifyDisease(imageBuffer) {
+  const form = new FormData();
+  form.append('images', imageBuffer, { filename: 'plant.jpg', contentType: 'image/jpeg' });
+
+  const url = `https://my-api.plantnet.org/v2/diseases/identify?api-key=${PLANTNET_API_KEY}&include-related-images=false&no-reject=true&nb-results=3`;
+
+  const { data } = await axios.post(url, form, {
+    headers: form.getHeaders(),
+    timeout: 20000,
+  });
+
+  if (!data.results || data.results.length === 0) return null;
+
+  return data.results.map((r) => ({
+    score: (r.score * 100).toFixed(1),
+    name: r.name,
+    description: r.description || null,
   }));
 }
 
@@ -90,6 +106,26 @@ const NOT_FOUND_MESSAGE =
   '• Use good natural light\n' +
   '• Avoid blurry or shadowed photos\n\n' +
   'Try sending another photo!';
+
+// ---------- Format disease results ----------
+function formatDiseaseResult(diseases) {
+  if (!diseases || diseases.length === 0) return null;
+
+  const top = diseases[0];
+  if (parseFloat(top.score) < 20) return null; // skip if confidence too low
+
+  let reply = `\n🦠 *Disease Check:*\n`;
+  reply += `*Most likely:* ${top.description || top.name} _(${top.score}% confidence)_\n`;
+
+  if (diseases.length > 1) {
+    reply += `\n_Other possible conditions:_\n`;
+    diseases.slice(1).forEach((d) => {
+      reply += `• ${d.description || d.name} (${d.score}%)\n`;
+    });
+  }
+
+  return reply;
+}
 
 // ---------- WhatsApp bot ----------
 let isRestarting = false;
@@ -174,28 +210,40 @@ async function startBot() {
         if (isImage) {
           await sock.sendPresenceUpdate('composing', remoteJid);
           await sock.sendMessage(remoteJid, {
-            text: '🔍 Identifying your plant, one moment...',
+            text: '🔍 Scanning your plant, one moment...',
           });
 
           const buffer = await downloadMediaMessage(msg, 'buffer', {}, {
             logger,
             reuploadRequest: sock.updateMediaMessage,
           });
-          const matches = await identifyPlant(buffer);
 
-          if (!matches) {
+          // Run plant ID and disease check in parallel
+          const [matches, diseases] = await Promise.allSettled([
+            identifyPlant(buffer),
+            identifyDisease(buffer),
+          ]);
+
+          const plantMatches = matches.status === 'fulfilled' ? matches.value : null;
+          const diseaseMatches = diseases.status === 'fulfilled' ? diseases.value : null;
+
+          if (!plantMatches) {
             await sock.sendMessage(remoteJid, { text: NOT_FOUND_MESSAGE });
             continue;
           }
 
-          const top = matches[0];
+          const top = plantMatches[0];
 
-          // Send identification result immediately
-          await sock.sendMessage(remoteJid, {
-            text: formatHeader(top) + formatAlternates(matches),
-          });
+          // Send plant identification result
+          let plantMsg = formatHeader(top) + formatAlternates(plantMatches);
 
-          // Then generate and send a richer AI description (Groq -> Nvidia fallback)
+          // Append disease results if found
+          const diseaseText = formatDiseaseResult(diseaseMatches);
+          if (diseaseText) plantMsg += diseaseText;
+
+          await sock.sendMessage(remoteJid, { text: plantMsg });
+
+          // Then generate and send AI description
           await sock.sendPresenceUpdate('composing', remoteJid);
           const description = await generateDescription({
             scientificName: top.scientificName,
@@ -227,10 +275,11 @@ async function startBot() {
           const name = msg.pushName ? msg.pushName.split(' ')[0] : 'there';
           const intro =
             `🌿 Good day, *${name}!*\n\n` +
-            `I'm *Plant Identifier*, built by *Aliu Johnson Temitope*, a fellow of the *3MTT Airtel NextGen Program* (Fellow ID: FE/23/24184818).\n\n` +
+            `I'm *Flora Scan*, built by *Aliu Johnson Temitope*, a fellow of the *3MTT Airtel NextGen Program* (Fellow ID: FE/23/24184818).\n\n` +
             `*Here's what I can do for you:*\n` +
             `📸 *Identify plants* — Send me a clear photo of any plant (leaf, flower, fruit, or bark) and I'll tell you exactly what it is.\n` +
             `📖 *Plant details* — Get the scientific name, common names, family, and confidence score.\n` +
+            `🦠 *Disease detection* — I'll automatically check your plant photo for signs of disease or infection.\n` +
             `🌱 *Care & uses* — Learn about a plant's habitat, medicinal or culinary uses, and care tips.\n` +
             `💬 *Plant Q&A* — Ask me any question about plants, gardening, or plant care and I'll answer accurately.\n\n` +
             `_Just send a plant photo or type your plant question to get started!_ 🌻`;

@@ -72,7 +72,7 @@ async function callNvidia(messages) {
   return data.choices?.[0]?.message?.content?.trim();
 }
 
-const QUESTION_SYSTEM_PROMPT = `You are a plant expert assistant for a WhatsApp bot called Plant Identifier.
+const QUESTION_SYSTEM_PROMPT = `You are a plant expert assistant for a WhatsApp bot called Flora Scan.
 Your job is to answer questions about plants only — topics like plant species, care, growth, diseases, soil, watering, pruning, identification, uses, habitats, and gardening.
 
 Rules:
