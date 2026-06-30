@@ -218,14 +218,29 @@ async function startBot() {
             reuploadRequest: sock.updateMediaMessage,
           });
 
-          // Run plant ID and disease check in parallel
-          const [matches, diseases] = await Promise.allSettled([
-            identifyPlant(buffer),
-            identifyDisease(buffer),
-          ]);
+          // Check if the user asked about disease in their caption
+          const caption =
+            msg.message.imageMessage?.caption ||
+            msg.message.viewOnceMessageV2?.message?.imageMessage?.caption || '';
+          const isDiseaseQuery = /disease|condition|sick|infection|infected|pest|blight|rot|wilt|spot|mold|mould|fungus|fungi|affect/i.test(caption);
 
-          const plantMatches = matches.status === 'fulfilled' ? matches.value : null;
-          const diseaseMatches = diseases.status === 'fulfilled' ? diseases.value : null;
+          if (isDiseaseQuery) {
+            // Disease-focused scan
+            const diseases = await identifyDisease(buffer);
+            const diseaseText = formatDiseaseResult(diseases);
+
+            if (diseaseText) {
+              await sock.sendMessage(remoteJid, { text: `🦠 *Disease Scan Result:*\n${diseaseText}` });
+            } else {
+              await sock.sendMessage(remoteJid, {
+                text: '✅ No significant disease or condition was detected on this plant. It looks healthy! If you are concerned, try a clearer close-up photo of the affected area.',
+              });
+            }
+            continue;
+          }
+
+          // Standard plant identification
+          const plantMatches = await identifyPlant(buffer);
 
           if (!plantMatches) {
             await sock.sendMessage(remoteJid, { text: NOT_FOUND_MESSAGE });
@@ -234,14 +249,9 @@ async function startBot() {
 
           const top = plantMatches[0];
 
-          // Send plant identification result
-          let plantMsg = formatHeader(top) + formatAlternates(plantMatches);
-
-          // Append disease results if found
-          const diseaseText = formatDiseaseResult(diseaseMatches);
-          if (diseaseText) plantMsg += diseaseText;
-
-          await sock.sendMessage(remoteJid, { text: plantMsg });
+          await sock.sendMessage(remoteJid, {
+            text: formatHeader(top) + formatAlternates(plantMatches),
+          });
 
           // Then generate and send AI description
           await sock.sendPresenceUpdate('composing', remoteJid);
