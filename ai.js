@@ -77,20 +77,59 @@ Your job is to answer questions about plants only — topics like plant species,
 
 Rules:
 - If the question is about plants or gardening in any way, answer it accurately and helpfully in plain conversational language. Keep responses concise (under 200 words).
+- Where relevant, tailor advice to Nigerian farming conditions, climate zones, and locally available inputs — but only where it genuinely applies; do not force "Nigeria" into every sentence.
 - If the question is NOT about plants or gardening, respond with exactly this message and nothing else:
   "I'm only able to help with plant-related questions. 🌿 Send me a plant photo to identify it, or ask me anything about plants, gardening, or plant care!"
 - Do not use markdown headers. Short paragraphs are fine.`;
 
-async function callAI(messages) {
+const DISEASE_REPORT_SYSTEM_PROMPT = `You are an expert plant pathologist and agricultural extension officer writing reports for Nigerian farmers and gardeners via a WhatsApp bot called Flora Scan.
+
+Given information about a detected plant disease/condition and the plant it affects, write a clear, structured report with the following sections — use the exact bold labels shown:
+
+*🦠 Disease / Condition:* [name and one-sentence explanation of what it is]
+
+*🔍 Possible Causes:* [2–4 bullet points covering pathogens, environmental stress, pests, or cultural factors]
+
+*💊 Treatment Options:* [2–4 bullet points with specific fungicides, pesticides, or biological controls available in Nigeria where possible]
+
+*🛡️ Preventive Measures:* [2–4 bullet points on cultural practices to prevent recurrence]
+
+*🌾 Best Farming Practices:* [2–3 bullet points of good agronomic practices relevant to Nigerian conditions — rainy season timing, crop spacing, soil management, etc.]
+
+Rules:
+- Keep each section concise but actionable.
+- Mention Nigerian-relevant products, seasons, or practices naturally where they apply — do not force "Nigeria" into every line.
+- Preserve accurate plant origin and scientific information; do not falsely localise a plant's native region.
+- Do not use markdown headers or horizontal rules — only the bold labels shown above.
+- Write in plain, friendly language a smallholder farmer can understand.
+- Total response should be under 350 words.`;
+
+async function callAI(messages, maxTokens = 300) {
   try {
-    const result = await callGroq(messages);
+    const { data } = await axios.post(
+      'https://api.groq.com/openai/v1/chat/completions',
+      { model: GROQ_MODEL, messages, temperature: 0.4, max_tokens: maxTokens },
+      {
+        headers: { Authorization: `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' },
+        timeout: 25000,
+      }
+    );
+    const result = data.choices?.[0]?.message?.content?.trim();
     if (result) return result;
   } catch (err) {
     console.error('Groq failed:', err.response?.data?.error?.message || err.message);
   }
 
   try {
-    const result = await callNvidia(messages);
+    const { data } = await axios.post(
+      'https://integrate.api.nvidia.com/v1/chat/completions',
+      { model: NVIDIA_MODEL, messages, temperature: 0.4, max_tokens: maxTokens },
+      {
+        headers: { Authorization: `Bearer ${NVIDIA_API_KEY}`, 'Content-Type': 'application/json' },
+        timeout: 30000,
+      }
+    );
+    const result = data.choices?.[0]?.message?.content?.trim();
     if (result) return result;
   } catch (err) {
     console.error('Nvidia NIM failed:', err.response?.data?.error?.message || err.message);
@@ -129,4 +168,31 @@ async function answerQuestion(question) {
   return callAI(messages);
 }
 
-module.exports = { generateDescription, answerQuestion };
+/**
+ * Generates a detailed disease report with Nigerian farming context.
+ * Takes detected disease results and plant info.
+ * Returns null if AI providers fail.
+ */
+async function generateDiseaseReport({ diseases, plantInfo }) {
+  const topDisease = diseases?.[0];
+  const diseaseName = topDisease?.description || topDisease?.name || 'Unknown condition';
+  const plantName = plantInfo?.commonName || plantInfo?.scientificName || 'the plant';
+  const scientificName = plantInfo?.scientificName || 'unknown';
+
+  const userPrompt =
+    `Plant affected: ${plantName} (${scientificName})\n` +
+    `Detected condition: ${diseaseName} (confidence: ${topDisease?.score}%)\n` +
+    (diseases?.length > 1
+      ? `Other possible conditions: ${diseases.slice(1).map(d => `${d.description || d.name} (${d.score}%)`).join(', ')}\n`
+      : '') +
+    `\nWrite the full disease report now.`;
+
+  const messages = [
+    { role: 'system', content: DISEASE_REPORT_SYSTEM_PROMPT },
+    { role: 'user', content: userPrompt },
+  ];
+
+  return callAI(messages, 600);
+}
+
+module.exports = { generateDescription, answerQuestion, generateDiseaseReport };

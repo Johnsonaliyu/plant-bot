@@ -11,7 +11,7 @@ const pino = require('pino');
 const axios = require('axios');
 const FormData = require('form-data');
 const readline = require('readline');
-const { generateDescription, answerQuestion } = require('./ai');
+const { generateDescription, answerQuestion, generateDiseaseReport } = require('./ai');
 
 const PLANTNET_API_KEY = process.env.PLANTNET_API_KEY;
 const PLANTNET_PROJECT = process.env.PLANTNET_PROJECT || 'all';
@@ -232,15 +232,55 @@ async function startBot() {
           const isDiseaseQuery = /disease|condition|sick|infection|infected|pest|blight|rot|wilt|spot|mold|mould|fungus|fungi|affect/i.test(caption);
 
           if (isDiseaseQuery) {
-            // Disease-focused scan
-            const diseases = await identifyDisease(buffer);
-            const diseaseText = formatDiseaseResult(diseases);
+            // Run plant ID and disease detection in parallel
+            const [plantResult, diseaseResult] = await Promise.allSettled([
+              identifyPlant(buffer),
+              identifyDisease(buffer),
+            ]);
 
-            if (diseaseText) {
-              await sock.sendMessage(remoteJid, { text: `🦠 *Disease Scan Result:*\n${diseaseText}` });
-            } else {
+            const plantMatches = plantResult.status === 'fulfilled' ? plantResult.value : null;
+            const diseases = diseaseResult.status === 'fulfilled' ? diseaseResult.value : null;
+
+            const plantInfo = plantMatches?.[0]
+              ? {
+                  scientificName: plantMatches[0].scientificName,
+                  commonName: plantMatches[0].commonNames[0] || null,
+                  family: plantMatches[0].family,
+                }
+              : null;
+
+            // If plant was identified, show its name first
+            if (plantInfo) {
               await sock.sendMessage(remoteJid, {
-                text: '✅ No significant disease or condition was detected on this plant. It looks healthy! If you are concerned, try a clearer close-up photo of the affected area.',
+                text:
+                  `🌿 *Plant identified:* ${plantInfo.commonName || plantInfo.scientificName}` +
+                  ` (_${plantInfo.scientificName}_)\n` +
+                  `*Confidence:* ${plantMatches[0].score}%\n\n` +
+                  `🔬 Running disease analysis...`,
+              });
+            }
+
+            await sock.sendPresenceUpdate('composing', remoteJid);
+
+            if (!diseases || diseases.length === 0 || parseFloat(diseases[0].score) < 5) {
+              await sock.sendMessage(remoteJid, {
+                text: '✅ No significant disease or condition was detected on this plant. It appears healthy! For best results, send a close-up photo of the affected leaf, stem, or fruit.',
+              });
+              continue;
+            }
+
+            // Generate detailed AI disease report
+            const report = await generateDiseaseReport({ diseases, plantInfo });
+
+            if (report) {
+              await sock.sendMessage(remoteJid, { text: report });
+            } else {
+              // Fallback to basic formatted result
+              const diseaseText = formatDiseaseResult(diseases);
+              await sock.sendMessage(remoteJid, {
+                text: diseaseText
+                  ? `🦠 *Disease Scan Result:*\n${diseaseText}`
+                  : '⚠️ Disease scan completed but detailed analysis is unavailable right now. Please try again.',
               });
             }
             continue;
