@@ -1,4 +1,5 @@
 const axios = require('axios');
+const FormData = require('form-data');
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
@@ -197,4 +198,42 @@ async function generateDiseaseReport({ diseases, plantInfo }) {
   return callAI(messages, 600);
 }
 
-module.exports = { generateDescription, answerQuestion, generateDiseaseReport };
+/**
+ * Transcribes a voice note buffer to text using Groq Whisper.
+ * mimeType should match the audio format (e.g. 'audio/ogg; codecs=opus').
+ * Returns the transcript string, or null if transcription fails.
+ */
+async function transcribeAudio(audioBuffer, mimeType) {
+  if (!GROQ_API_KEY) throw new Error('GROQ_API_KEY not set');
+
+  // Pick a safe file extension so Groq recognises the format
+  const ext = mimeType && mimeType.includes('mp4') ? 'm4a'
+    : mimeType && mimeType.includes('mp3') ? 'mp3'
+    : mimeType && mimeType.includes('webm') ? 'webm'
+    : 'ogg'; // WhatsApp PTT is usually ogg/opus
+
+  const form = new FormData();
+  form.append('file', audioBuffer, { filename: `audio.${ext}`, contentType: mimeType || 'audio/ogg' });
+  form.append('model', 'whisper-large-v3');
+  form.append('response_format', 'text');
+
+  try {
+    const { data } = await axios.post(
+      'https://api.groq.com/openai/v1/audio/transcriptions',
+      form,
+      {
+        headers: {
+          Authorization: `Bearer ${GROQ_API_KEY}`,
+          ...form.getHeaders(),
+        },
+        timeout: 30000,
+      }
+    );
+    return typeof data === 'string' ? data.trim() : data?.text?.trim() || null;
+  } catch (err) {
+    console.error('Whisper transcription failed:', err.response?.data || err.message);
+    return null;
+  }
+}
+
+module.exports = { generateDescription, answerQuestion, generateDiseaseReport, transcribeAudio };

@@ -11,7 +11,8 @@ const pino = require('pino');
 const axios = require('axios');
 const FormData = require('form-data');
 const readline = require('readline');
-const { generateDescription, answerQuestion, generateDiseaseReport } = require('./ai');
+const { generateDescription, answerQuestion, generateDiseaseReport, transcribeAudio } = require('./ai');
+const { textToSpeech } = require('./tts');
 
 const PLANTNET_API_KEY = process.env.PLANTNET_API_KEY;
 const PLANTNET_PROJECT = process.env.PLANTNET_PROJECT || 'all';
@@ -243,6 +244,10 @@ async function startBot() {
           (messageType === 'viewOnceMessageV2' &&
             msg.message.viewOnceMessageV2?.message?.imageMessage);
 
+        const isVoiceNote =
+          messageType === 'audioMessage' &&
+          msg.message.audioMessage?.ptt === true;
+
         if (isImage) {
           await sock.sendPresenceUpdate('composing', remoteJid);
           await sock.sendMessage(remoteJid, {
@@ -355,6 +360,59 @@ async function startBot() {
           continue;
         }
 
+        if (isVoiceNote) {
+          await sock.sendPresenceUpdate('composing', remoteJid);
+          await sock.sendMessage(remoteJid, { text: '🎙️ Got your voice note, give me a moment...' });
+
+          const audioBuffer = await downloadMediaMessage(msg, 'buffer', {}, {
+            logger,
+            reuploadRequest: sock.updateMediaMessage,
+          });
+          const mimeType = msg.message.audioMessage?.mimetype || 'audio/ogg; codecs=opus';
+
+          // Transcribe voice note
+          const transcript = await transcribeAudio(audioBuffer, mimeType);
+          if (!transcript) {
+            await sock.sendMessage(remoteJid, {
+              text: "Sorry, I couldn't make out that voice note. Please try again or type your question.",
+            });
+            continue;
+          }
+
+          // Answer with conversation memory
+          const mem = getMemory(remoteJid);
+          let questionWithContext = transcript;
+          if (mem.lastPlant) {
+            const { commonName, scientificName } = mem.lastPlant;
+            questionWithContext =
+              `[Context: the user previously identified a ${commonName || scientificName} (${scientificName})]\n` +
+              transcript;
+          }
+
+          const answer = await answerQuestion(questionWithContext, mem.messages);
+          const replyText = answer ||
+            "I'm only able to help with plant-related questions. Send me a plant photo to identify it, or ask me anything about plants, gardening, or plant care!";
+
+          // Reply as a voice note; fall back to text if TTS fails
+          try {
+            await sock.sendPresenceUpdate('recording', remoteJid);
+            const audioReply = await textToSpeech(replyText);
+            await sock.sendMessage(remoteJid, {
+              audio: audioReply,
+              mimetype: 'audio/mpeg',
+              ptt: true,
+            });
+          } catch (ttsErr) {
+            console.error('TTS failed, falling back to text:', ttsErr.message);
+            await sock.sendMessage(remoteJid, { text: replyText });
+          }
+
+          // Store exchange in memory
+          pushMessage(remoteJid, 'user', transcript);
+          pushMessage(remoteJid, 'assistant', replyText);
+          continue;
+        }
+
         const text =
           msg.message.conversation || msg.message.extendedTextMessage?.text || '';
 
@@ -372,8 +430,9 @@ async function startBot() {
             `📖 *Plant details* — Get the scientific name, common names, family, and confidence score.\n` +
             `🦠 *Disease detection* — I'll automatically check your plant photo for signs of disease or infection.\n` +
             `🌱 *Care & uses* — Learn about a plant's habitat, medicinal or culinary uses, and care tips.\n` +
-            `💬 *Plant Q&A* — Ask me any question about plants, gardening, or plant care and I'll answer accurately.\n\n` +
-            `_Just send a plant photo or type your plant question to get started!_ 🌻`;
+            `💬 *Plant Q&A* — Ask me any question about plants, gardening, or plant care and I'll answer accurately.\n` +
+            `🎙️ *Voice notes* — Send me a voice note and I'll reply with a voice note too!\n\n` +
+            `_Just send a plant photo, voice note, or type your plant question to get started!_ 🌻`;
 
           await sock.sendMessage(remoteJid, { text: intro });
           continue;
