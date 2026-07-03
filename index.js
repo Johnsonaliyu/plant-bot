@@ -424,7 +424,7 @@ async function startBot() {
           const name = msg.pushName ? msg.pushName.split(' ')[0] : 'there';
           const intro =
             `🌿 Good day, *${name}!*\n\n` +
-            `I'm *Flora Scan*, built by *Aliu Johnson Temitope*, a fellow of the *3MTT Airtel NextGen Program* (Fellow ID: FE/23/24184818).\n\n` +
+            `I'm *Flora Scan*, your smart plant assistant built by *Aliu Johnson Temitope*, a fellow of the *3MTT Airtel NextGen Program* (Fellow ID: FE/23/24184818).\n\n` +
             `*Here's what I can do for you:*\n` +
             `📸 *Identify plants* — Send me a clear photo of any plant (leaf, flower, fruit, or bark) and I'll tell you exactly what it is.\n` +
             `📖 *Plant details* — Get the scientific name, common names, family, and confidence score.\n` +
