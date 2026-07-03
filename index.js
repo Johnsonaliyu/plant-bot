@@ -399,7 +399,7 @@ async function startBot() {
             const audioReply = await textToSpeech(replyText);
             await sock.sendMessage(remoteJid, {
               audio: audioReply,
-              mimetype: 'audio/mpeg',
+              mimetype: 'audio/ogg; codecs=opus',
               ptt: true,
             });
           } catch (ttsErr) {
