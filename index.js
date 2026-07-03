@@ -134,6 +134,35 @@ function formatDiseaseResult(diseases) {
   return reply;
 }
 
+// ---------- Conversation memory ----------
+// Stores per-user context: last identified plant + recent message history
+const MAX_HISTORY = 10; // max messages kept (5 exchanges)
+const MEMORY_TTL_MS = 30 * 60 * 1000; // forget after 30 min of inactivity
+
+const userMemory = new Map(); // remoteJid -> { lastPlant, messages, updatedAt }
+
+function getMemory(jid) {
+  const entry = userMemory.get(jid);
+  if (!entry) return { lastPlant: null, messages: [] };
+  // Expire stale entries
+  if (Date.now() - entry.updatedAt > MEMORY_TTL_MS) {
+    userMemory.delete(jid);
+    return { lastPlant: null, messages: [] };
+  }
+  return entry;
+}
+
+function setMemory(jid, patch) {
+  const current = getMemory(jid);
+  userMemory.set(jid, { ...current, ...patch, updatedAt: Date.now() });
+}
+
+function pushMessage(jid, role, content) {
+  const mem = getMemory(jid);
+  const messages = [...mem.messages, { role, content }].slice(-MAX_HISTORY);
+  setMemory(jid, { messages });
+}
+
 // ---------- WhatsApp bot ----------
 let isRestarting = false;
 
@@ -295,10 +324,9 @@ async function startBot() {
           }
 
           const top = plantMatches[0];
+          const idText = formatHeader(top) + formatAlternates(plantMatches);
 
-          await sock.sendMessage(remoteJid, {
-            text: formatHeader(top) + formatAlternates(plantMatches),
-          });
+          await sock.sendMessage(remoteJid, { text: idText });
 
           // Then generate and send AI description
           await sock.sendPresenceUpdate('composing', remoteJid);
@@ -309,15 +337,21 @@ async function startBot() {
             genus: top.genus,
           });
 
-          if (description) {
-            await sock.sendMessage(remoteJid, {
-              text: `📖 *About this plant:*\n\n${description.text}`,
-            });
-          } else {
-            await sock.sendMessage(remoteJid, {
-              text: "Couldn't fetch extra details right now, but the identification above is solid. Try again later for the full description.",
-            });
-          }
+          const descText = description
+            ? `📖 *About this plant:*\n\n${description.text}`
+            : "Couldn't fetch extra details right now, but the identification above is solid. Try again later for the full description.";
+
+          await sock.sendMessage(remoteJid, { text: descText });
+
+          // Save identified plant + bot reply into memory
+          setMemory(remoteJid, {
+            lastPlant: {
+              scientificName: top.scientificName,
+              commonName: top.commonNames[0] || null,
+              family: top.family,
+            },
+          });
+          pushMessage(remoteJid, 'assistant', `${idText}\n\n${descText}`);
           continue;
         }
 
@@ -345,16 +379,28 @@ async function startBot() {
           continue;
         }
 
-        // Answer plant questions or decline off-topic ones
+        // Answer plant questions with conversation history for context
         await sock.sendPresenceUpdate('composing', remoteJid);
-        const answer = await answerQuestion(text);
-        if (answer) {
-          await sock.sendMessage(remoteJid, { text: answer });
-        } else {
-          await sock.sendMessage(remoteJid, {
-            text: "I'm only able to help with plant-related questions. 🌿 Send me a plant photo to identify it, or ask me anything about plants, gardening, or plant care!",
-          });
+        const mem = getMemory(remoteJid);
+
+        // Build a context note if we know the last plant
+        let questionWithContext = text;
+        if (mem.lastPlant) {
+          const { commonName, scientificName } = mem.lastPlant;
+          questionWithContext =
+            `[Context: the user previously identified a ${commonName || scientificName} (${scientificName})]\n` +
+            text;
         }
+
+        const answer = await answerQuestion(questionWithContext, mem.messages);
+        const replyText = answer ||
+          "I'm only able to help with plant-related questions. 🌿 Send me a plant photo to identify it, or ask me anything about plants, gardening, or plant care!";
+
+        await sock.sendMessage(remoteJid, { text: replyText });
+
+        // Store this exchange in memory
+        pushMessage(remoteJid, 'user', text);
+        pushMessage(remoteJid, 'assistant', replyText);
       } catch (err) {
         console.error('Error handling message:', err.message);
         try {

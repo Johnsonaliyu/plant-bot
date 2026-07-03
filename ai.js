@@ -157,11 +157,13 @@ async function generateDescription(plantInfo) {
 /**
  * Answers a plant-related question.
  * Politely declines if the question is not about plants.
+ * Accepts an optional history array of {role, content} objects for context.
  * Returns null if both AI providers fail.
  */
-async function answerQuestion(question) {
+async function answerQuestion(question, history = []) {
   const messages = [
     { role: 'system', content: QUESTION_SYSTEM_PROMPT },
+    ...history,
     { role: 'user', content: question },
   ];
 
