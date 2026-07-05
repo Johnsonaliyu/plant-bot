@@ -23,6 +23,51 @@ if (!PLANTNET_API_KEY) {
   process.exit(1);
 }
 
+// ---------- Language detection ----------
+function detectLanguage(text) {
+  const t = text.toLowerCase();
+  // Hausa markers
+  if (/\b(sannu|yaya|ina kwana|barka|ina|da|mai|don|kai|shi|mun|sun|suna|wannan|wani|akan|kuma|tare|yanzu|lokaci|aiki|gona|noma|tsire|bishiya|kwayoyi|ciyayi|abinci|ruwa|kasa|nau'i|kasar|lafiya|taimako|menene|yaushe|wane|wanda|amma|ko|ba|ne|ce|ya|ta|su|mu|ku|ni)\b/.test(t)) return 'ha';
+  // Igbo markers
+  if (/\b(nnọọ|kedụ|ndewo|igwe|chi|ndi|ọ|na|ya|ha|anyị|unu|ihe|ebe|oge|ọrụ|ugbo|osisi|mkpụrụ|akwụkwọ|ala|mmiri|ụmụ|ndị|maka|site|yana|ma|o|nke|ọ bụ|gịnị|ọ dị|kedu|biko|daalu|asụsụ)\b/.test(t)) return 'ig';
+  // Yoruba markers
+  if (/\b(ẹ káàbọ̀|ẹ káaro|e kaaro|e kaasan|e kaale|bawo|jẹ|ni|ti|fun|bi|ati|tabi|nitori|sibẹ|ṣugbọn|ilẹ|omi|eweko|igi|irugbin|oko|agbe|àjàrà|àgbàdo|isu|ẹfọ|ewe|eso|ododo|joko|ẹ jọ|ese|o dabo|pẹlẹ)\b/.test(t)) return 'yo';
+  return 'en';
+}
+
+const GREETINGS = {
+  en: /^(hi+|hello+|hey+|howdy|good\s*(morning|afternoon|evening|day|night)|what'?s up|sup|greetings|yo|hiya|helo|hy|hei|hai)\b/i,
+  ha: /^(sannu|barka\s*da|ina\s*kwana|ina\s*wuni|ina\s*yini|yaya\s*lafiya)/i,
+  ig: /^(nnọọ|ndewo|kedụ|ọ\s*dị\s*mma|how\s*di)/i,
+  yo: /^(ẹ\s*k[aá][ar]|e\s*k[aá][ar]|bawo|ẹ\s*káàbọ̀|ẹ\s*káabo)/i,
+};
+
+function buildGreeting(name, lang) {
+  const n = name || 'there';
+  const shared =
+    `📸 *Identify plants* — Send me a clear photo of any plant and I'll tell you exactly what it is.\n` +
+    `🦠 *Disease detection* — I'll check your plant photo for signs of disease.\n` +
+    `🌱 *Agronomy & crop Q&A* — Ask about rice, yam, maize, soil, fertilisers, and more.\n` +
+    `💬 *Plant Q&A* — Any question about plants, gardening, or plant care.\n` +
+    `🎙️ *Voice notes* — Send a voice note and I'll reply with one too!\n`;
+
+  if (lang === 'ha') {
+    return `🌿 Sannu, *${n}!*\n\nNi ne *Flora Scan*, an gina ni don taimaka maka game da tsire-tsire da noma.\n\n*Abin da zan iya yi maka:*\n` + shared + `\n_Aika mini hoto na tsire ko tambaya ta noma don farawa!_ 🌻`;
+  }
+  if (lang === 'ig') {
+    return `🌿 Ndewo, *${n}!*\n\nAhụ m bụ *Flora Scan*, emebere m iji nyere gị aka n'ihe gbasara osisi na ọrụ ugbo.\n\n*Ihe m nwere ike ime:*\n` + shared + `\n_Ziga foto osisi ma ọ bụ ajụjụ ugbo iji bido!_ 🌻`;
+  }
+  if (lang === 'yo') {
+    return `🌿 Ẹ káàbọ̀, *${n}!*\n\nMo jẹ *Flora Scan*, a ṣẹda mi lati ràn ọ́ lọ́wọ́ pẹ̀lú ewéko àti iṣẹ́ àgbẹ̀.\n\n*Ohun tí mo lè ṣe:*\n` + shared + `\n_Fi fọto ewéko ránṣẹ́ tàbí béèrè ìbéèrè nípa àgbẹ̀ láti bẹ̀rẹ̀!_ 🌻`;
+  }
+  // English default
+  return (
+    `🌿 Good day, *${n}!*\n\nI'm *Flora Scan*, built by *Aliu Johnson Temitope*, a fellow of the *3MTT Airtel NextGen Program* (Fellow ID: FE/23/24184818).\n\n*Here's what I can do for you:*\n` +
+    shared +
+    `\n_Just send a plant photo, voice note, or type your plant question to get started!_ 🌻`
+  );
+}
+
 function ask(question) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   return new Promise((resolve) => rl.question(question, (answer) => {
@@ -418,42 +463,34 @@ async function startBot() {
 
         if (!text) continue;
 
-        const isGreeting = /^(hi+|hello+|hey+|howdy|good\s*(morning|afternoon|evening|day|night)|what'?s up|sup|greetings|yo|hiya|helo|hy|hei|hai)\b/i.test(text.trim());
+        const lang = detectLanguage(text.trim());
+        const isGreeting = Object.entries(GREETINGS).some(([, rx]) => rx.test(text.trim()));
 
         if (isGreeting) {
-          const name = msg.pushName ? msg.pushName.split(' ')[0] : 'there';
-          const intro =
-            `🌿 Good day, *${name}!*\n\n` +
-            `I'm *Flora Scan*, your smart plant assistant built by *Aliu Johnson Temitope*, a fellow of the *3MTT Airtel NextGen Program* (Fellow ID: FE/23/24184818).\n\n` +
-            `*Here's what I can do for you:*\n` +
-            `📸 *Identify plants* — Send me a clear photo of any plant (leaf, flower, fruit, or bark) and I'll tell you exactly what it is.\n` +
-            `📖 *Plant details* — Get the scientific name, common names, family, and confidence score.\n` +
-            `🦠 *Disease detection* — I'll automatically check your plant photo for signs of disease or infection.\n` +
-            `🌱 *Care & uses* — Learn about a plant's habitat, medicinal or culinary uses, and care tips.\n` +
-            `💬 *Plant Q&A* — Ask me any question about plants, gardening, or plant care and I'll answer accurately.\n` +
-            `🎙️ *Voice notes* — Send me a voice note and I'll reply with a voice note too!\n\n` +
-            `_Just send a plant photo, voice note, or type your plant question to get started!_ 🌻`;
-
-          await sock.sendMessage(remoteJid, { text: intro });
+          const name = msg.pushName ? msg.pushName.split(' ')[0] : null;
+          await sock.sendMessage(remoteJid, { text: buildGreeting(name, lang) });
           continue;
         }
 
-        // Answer plant questions with conversation history for context
+        // Answer plant/agronomy questions with conversation history for context
         await sock.sendPresenceUpdate('composing', remoteJid);
         const mem = getMemory(remoteJid);
 
-        // Build a context note if we know the last plant
-        let questionWithContext = text;
+        // Prepend last plant context and detected language hint for the AI
+        let questionWithContext = `[User language: ${lang}]\n` + text;
         if (mem.lastPlant) {
           const { commonName, scientificName } = mem.lastPlant;
           questionWithContext =
-            `[Context: the user previously identified a ${commonName || scientificName} (${scientificName})]\n` +
+            `[User language: ${lang}] [Context: the user previously identified a ${commonName || scientificName} (${scientificName})]\n` +
             text;
         }
 
         const answer = await answerQuestion(questionWithContext, mem.messages);
         const replyText = answer ||
-          "I'm only able to help with plant-related questions. 🌿 Send me a plant photo to identify it, or ask me anything about plants, gardening, or plant care!";
+          (lang === 'ha' ? 'Zan iya taimaka ne kawai game da tsire-tsire da noma. 🌿 Aika mini hoto na tsire ko tambaya ta noma!'
+          : lang === 'ig' ? 'Nwere ike isi m aka naanị n\'ihe gbasara osisi na ọrụ ugbo. 🌿 Ziga foto osisi ma ọ bụ ajụjụ ugbo!'
+          : lang === 'yo' ? 'Mo lè ràn ọ́ lọ́wọ́ nínú ìbéèrè nípa ewéko àti iṣẹ́ àgbẹ̀ nìkan. 🌿 Fi fọto ewéko ránṣẹ́ tàbí béèrè ìbéèrè!'
+          : "I'm only able to help with plant and agriculture-related questions. 🌿 Send me a plant photo to identify it, or ask me anything about plants, crops, farming, or soil!");
 
         await sock.sendMessage(remoteJid, { text: replyText });
 
