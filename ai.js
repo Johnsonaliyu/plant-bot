@@ -255,4 +255,112 @@ async function transcribeAudio(audioBuffer, mimeType) {
   }
 }
 
-module.exports = { generateDescription, answerQuestion, generateDiseaseReport, transcribeAudio };
+// ─────────────────────────────────────────────
+// Feature 3: Fertilizer & Treatment Recommendations
+// ─────────────────────────────────────────────
+
+const FERTILIZER_SYSTEM_PROMPT = `You are an expert agricultural inputs advisor for Nigerian farmers, assisting via a WhatsApp bot called Flora Scan.
+
+Given a crop/plant name and optionally a disease or pest problem, provide specific fertilizer and treatment recommendations tailored to Nigeria.
+
+Structure your response using ONLY these exact bold labels:
+
+*🌿 Recommended Fertilizers:*
+[2–4 specific fertilizer products with NPK ratios and application rates. Include products commonly sold in Nigeria: NPK 15-15-15, NPK 20-10-10, Urea (46%N), CAN, DAP, SSP. Mention both basal and top-dress applications where relevant. Include poultry manure or compost as a low-cost organic option.]
+
+*💊 Pest & Disease Treatment:*
+[2–4 specific products with active ingredients and brand names sold in Nigeria, e.g. Cypermethrin 10EC, Emamectin benzoate (Proclaim), Mancozeb (Dithane M-45), Metalaxyl + Mancozeb (Ridomil Gold), Lambda-cyhalothrin (Karate). Include mixing rate per litre of water or per hectare.]
+
+*🌱 Organic / Low-cost Alternatives:*
+[2–3 organic or traditional remedies: neem leaf extract, wood ash, fermented compost tea, garlic spray, etc. Practical for smallholder farmers with limited cash.]
+
+*📅 Application Schedule:*
+[Brief timeline: when to apply fertilizer (at planting, 3 WAP, 6 WAP, etc.) and spraying frequency for disease/pest control.]
+
+Language rule: Detect the user's language (English, Hausa, Igbo, Yoruba) and reply in that same language.
+Rules: Keep each section concise and actionable. Focus on inputs available in Nigerian markets. Total response under 320 words. Do not use markdown headers — only the bold labels shown.`;
+
+/**
+ * Generates specific fertilizer and treatment recommendations for a crop/plant.
+ * @param {object} opts
+ * @param {string} opts.cropOrPlant   - crop or plant name
+ * @param {string} [opts.disease]     - detected disease or pest (optional)
+ * @param {string} [opts.question]    - original user question for language detection
+ */
+async function generateFertilizerAdvice({ cropOrPlant, disease, question }) {
+  const userPrompt =
+    `Crop/plant: ${cropOrPlant}\n` +
+    (disease ? `Disease/pest problem: ${disease}\n` : '') +
+    (question ? `User question: ${question}\n` : '') +
+    `\nWrite the fertilizer and treatment recommendations now.`;
+
+  const messages = [
+    { role: 'system', content: FERTILIZER_SYSTEM_PROMPT },
+    { role: 'user', content: userPrompt },
+  ];
+
+  return callAI(messages, 500);
+}
+
+// ─────────────────────────────────────────────
+// Feature 4: Crop Yield Estimator
+// ─────────────────────────────────────────────
+
+const YIELD_ESTIMATOR_SYSTEM_PROMPT = `You are an agricultural economist and agronomy advisor for Nigerian farmers, assisting via WhatsApp bot called Flora Scan.
+
+Given a crop type and farm size, provide a practical yield and profit estimate based on Nigerian farming conditions.
+
+Structure your response using ONLY these exact bold labels:
+
+*🌾 Crop & Farm Size:*
+[Confirm the crop and farm size in the user's unit, converted to hectares in brackets.]
+
+*📊 Expected Yield:*
+[Realistic yield range for Nigerian conditions — low, average, and high estimates. State in bags (50 kg) and kg. Mention 1–2 key factors that most affect yield (variety, fertilizer, rainfall).]
+
+*💰 Estimated Input Costs (NGN):*
+[Itemised breakdown: seeds/seedlings, fertilizer, pesticides/herbicides, land preparation, planting labour, weeding labour, harvesting labour, miscellaneous. Show cost per item and a TOTAL. Use realistic current Nigerian market prices (2024–2025).]
+
+*💵 Revenue & Profit Estimate (NGN):*
+[Revenue at average current farm-gate price for that crop in Nigeria. Show:
+  Revenue (low scenario) – Input Cost = Net Profit (low)
+  Revenue (average scenario) – Input Cost = Net Profit (average)
+Briefly note price volatility and peak harvest season effect.]
+
+*📈 Tips to Maximise Your Yield:*
+[2–3 specific, practical tips for this crop in Nigerian conditions — improved variety names, optimal planting date, key fertilizer timing, etc.]
+
+Language rule: Detect the user's language (English, Hausa, Igbo, Yoruba) and reply in that same language.
+Rules: Use realistic 2024–2025 Nigerian market prices and yield data. Acknowledge price volatility. Keep total response under 420 words. Do not use markdown headers — only the bold labels shown.`;
+
+/**
+ * Generates a yield, cost, and profit estimate for a given crop and farm size.
+ * @param {object} opts
+ * @param {string} opts.crop           - crop name (e.g. "maize", "tomato")
+ * @param {number} opts.farmSize       - numeric farm size
+ * @param {string} opts.farmSizeUnit   - unit (e.g. "hectare", "acre", "plot")
+ * @param {string} [opts.lang]         - detected language code
+ */
+async function estimateCropYield({ crop, farmSize, farmSizeUnit, lang }) {
+  const userPrompt =
+    `[User language: ${lang || 'en'}]\n` +
+    `Crop: ${crop}\n` +
+    `Farm size: ${farmSize} ${farmSizeUnit}(s)\n` +
+    `\nProvide the yield, input cost, and profit estimate now.`;
+
+  const messages = [
+    { role: 'system', content: YIELD_ESTIMATOR_SYSTEM_PROMPT },
+    { role: 'user', content: userPrompt },
+  ];
+
+  return callAI(messages, 600);
+}
+
+module.exports = {
+  generateDescription,
+  answerQuestion,
+  generateDiseaseReport,
+  transcribeAudio,
+  generateFertilizerAdvice,
+  estimateCropYield,
+};

@@ -11,7 +11,7 @@ const pino = require('pino');
 const axios = require('axios');
 const FormData = require('form-data');
 const readline = require('readline');
-const { generateDescription, answerQuestion, generateDiseaseReport, transcribeAudio } = require('./ai');
+const { generateDescription, answerQuestion, generateDiseaseReport, transcribeAudio, generateFertilizerAdvice, estimateCropYield } = require('./ai');
 const { textToSpeech } = require('./tts');
 
 const PLANTNET_API_KEY = process.env.PLANTNET_API_KEY;
@@ -48,6 +48,8 @@ function buildGreeting(name, lang) {
     `📸 *Identify plants* — Send me a clear photo of any plant and I'll tell you exactly what it is.\n` +
     `🦠 *Disease detection* — I'll check your plant photo for signs of disease.\n` +
     `🌱 *Agronomy & crop Q&A* — Ask about rice, yam, maize, soil, fertilisers, and more.\n` +
+    `🧪 *Fertilizer & treatment advice* — Ask which fertilizers or treatments to use for any crop or plant problem.\n` +
+    `📊 *Crop yield estimator* — Tell me your crop and farm size and I'll estimate your yield, costs, and profit.\n` +
     `💬 *Plant Q&A* — Any question about plants, gardening, or plant care.\n` +
     `🎙️ *Voice notes* — Send a voice note and I'll reply with one too!\n`;
 
@@ -66,6 +68,71 @@ function buildGreeting(name, lang) {
     shared +
     `\n_Just send a plant photo, voice note, or type your plant question to get started!_ 🌻`
   );
+}
+
+// ---------- Feature 3 & 4 helpers ----------
+
+// Detect fertilizer / treatment intent
+const FERTILIZER_REGEX = /\b(fertilizer|fertiliser|fertilize|fertilise|manure|npk|urea|treatment|spray|spraying|pesticide|herbicide|fungicide|insecticide|what.*apply|how.*treat|remedy|chemical|organic.*treat|dosage|dose|application rate|apply.*farm|weed.*control|pest.*control|how to cure|cure.*plant|plant.*medicine)\b/i;
+
+// Detect yield / profit estimation intent
+const YIELD_REGEX = /\b(yield|harvest estimate|how much.*get|how many bags|profit|income|revenue|produce|production estimate|estimate.*farm|farm.*estimate|how much can i|what.*earn|cost of farming|cost.*farm|input cost|farming profit|how profitable)\b/i;
+
+// Common Nigerian crops — sorted longest-first so multi-word names match before substrings
+// (e.g. "sweet potato" is checked before "potato", preventing false positives)
+const KNOWN_CROPS = [
+  'sweet potato', 'sugarcane', 'watermelon', 'groundnut', 'sunflower', 'cocoyam',
+  'pineapple', 'plantain', 'sorghum', 'cassava', 'cowpea', 'soybean', 'spinach',
+  'lettuce', 'cabbage', 'cucumber', 'sesame', 'moringa', 'papaya', 'banana',
+  'tomato', 'pepper', 'potato', 'millet', 'cotton', 'ginger', 'garlic', 'carrot',
+  'onion', 'melon', 'mango', 'guava', 'wheat', 'cocoa', 'beans', 'maize',
+  'pawpaw', 'orange', 'okra', 'rice', 'yam', 'corn',
+].sort((a, b) => b.length - a.length); // guarantee longest-first
+
+/**
+ * Parses a farm size number + unit from free text.
+ * Returns { size, unit } or null.
+ * Handles "half <unit>" as well as decimal/integer expressions.
+ */
+function parseFarmSize(text) {
+  const lower = text.toLowerCase();
+
+  // Handle word "half <unit>"
+  const halfMatch = lower.match(/\bhalf\s+(hectare|ha|acre|plot)\b/);
+  if (halfMatch) {
+    const rawUnit = halfMatch[1] === 'ha' ? 'hectare' : halfMatch[1];
+    return { size: 0.5, unit: rawUnit };
+  }
+
+  // Numeric expression: "2 hectares", "1.5 acres", "4 plots", etc.
+  const match = text.match(/(\d+(?:\.\d+)?)\s*(hectare|hectares|ha|acre|acres|plot|plots|sqm|square\s*met(?:re|er)s?|sqft|square\s*fe(?:et|et))/i);
+  if (!match) return null;
+
+  const size = parseFloat(match[1]);
+  if (!size || size <= 0) return null; // reject 0 or NaN
+
+  const unit = match[2]
+    .toLowerCase()
+    .replace(/s$/, '')
+    .replace(/^ha$/, 'hectare')
+    .replace(/square\s*met(?:re|er)/, 'sqm')
+    .replace(/square\s*fe(?:et|et)/, 'sqft');
+
+  return { size, unit };
+}
+
+/**
+ * Parses a crop name from free text using word-boundary matching.
+ * Returns the matched crop string or null.
+ */
+function parseCropName(text) {
+  const lower = text.toLowerCase();
+  for (const crop of KNOWN_CROPS) {
+    // Escape spaces for multi-word crops, require word boundaries
+    const pattern = new RegExp(`\\b${crop.replace(/\s+/g, '\\s+')}\\b`);
+    if (pattern.test(lower)) return crop;
+  }
+  return null;
 }
 
 function ask(question) {
@@ -472,10 +539,132 @@ async function startBot() {
           continue;
         }
 
-        // Answer plant/agronomy questions with conversation history for context
         await sock.sendPresenceUpdate('composing', remoteJid);
         const mem = getMemory(remoteJid);
 
+        // ── Feature 4: Crop Yield Estimator ──────────────────────────────
+        const farmSizeFromMsg = parseFarmSize(text);
+        const isYieldIntent = YIELD_REGEX.test(text);
+
+        // Clear stale pendingYield if user is clearly asking something unrelated
+        // (a greeting, fertilizer query, or a long message that isn't a size response)
+        if (mem.pendingYield && !farmSizeFromMsg && !isYieldIntent && !parseCropName(text)) {
+          setMemory(remoteJid, { pendingYield: null });
+        }
+
+        const pendingYield = mem.pendingYield || null;
+
+        if (pendingYield) {
+          // We previously asked the user for crop name and/or farm size.
+          // Resolve what we now have from the new message.
+          const resolvedCrop = pendingYield.crop || parseCropName(text) || null;
+          const resolvedSize = farmSizeFromMsg;
+
+          if (resolvedCrop && resolvedSize) {
+            // ✅ Have everything — run the estimator
+            setMemory(remoteJid, { pendingYield: null });
+            await sock.sendMessage(remoteJid, {
+              text: `📊 Estimating yield for *${resolvedCrop}* on *${resolvedSize.size} ${resolvedSize.unit}(s)*...`,
+            });
+            await sock.sendPresenceUpdate('composing', remoteJid);
+            const estimate = await estimateCropYield({ crop: resolvedCrop, farmSize: resolvedSize.size, farmSizeUnit: resolvedSize.unit, lang });
+            const replyText = estimate || "Sorry, I couldn't generate the estimate right now. Please try again.";
+            await sock.sendMessage(remoteJid, { text: replyText });
+            pushMessage(remoteJid, 'user', text);
+            pushMessage(remoteJid, 'assistant', replyText);
+            continue;
+          } else if (resolvedCrop && !resolvedSize) {
+            // Still missing size — save crop and re-ask
+            setMemory(remoteJid, { pendingYield: { crop: resolvedCrop } });
+            const askMsg =
+              lang === 'ha' ? `📏 Don ƙididdige amfanin gonar *${resolvedCrop}*, faɗa mini girman gonarka (misali: "2 hectares", "1 acre", "4 plots").`
+              : lang === 'ig' ? `📏 Iji nwee ike ịkọwapụta ọrịre *${resolvedCrop}*, biko gwa m nha ugbo gị (dịka: "2 hectares", "1 acre", "4 plots").`
+              : lang === 'yo' ? `📏 Láti ṣe ìṣirò àmọ̀nà *${resolvedCrop}*, jọwọ sọ fún mi ìwọ̀n oko rẹ (fún àpẹẹrẹ: "2 hectares", "1 acre", "4 plots").`
+              : `📏 Got it — *${resolvedCrop}*. Now please tell me your farm size (e.g. "2 hectares", "1 acre", "4 plots").`;
+            await sock.sendMessage(remoteJid, { text: askMsg });
+            pushMessage(remoteJid, 'user', text);
+            pushMessage(remoteJid, 'assistant', askMsg);
+            continue;
+          } else {
+            // Still missing crop — re-ask for both
+            setMemory(remoteJid, { pendingYield: {} });
+            const askMsg =
+              lang === 'ha' ? `🌾 Don ƙididdige amfanin gona, faɗa mini: menene amfanin gonarka da girman gonarka? (misali: "Masara, 2 hectares")`
+              : lang === 'ig' ? `🌾 Iji nwee ike ịkọwapụta ọrịre, gwa m: gịnị bụ ihe ọ na-eto na ubi gị na nha ubi gị? (dịka: "Ọka, 2 hectares")`
+              : lang === 'yo' ? `🌾 Láti ṣe ìṣirò àmọ̀nà, jọwọ sọ fún mi: kíni irúgbìn rẹ àti ìwọ̀n oko rẹ? (fún àpẹẹrẹ: "Àgbàdo, 2 hectares")`
+              : `🌾 Please tell me both your crop and farm size (e.g. "Maize, 2 hectares" or "Tomato, 1 acre").`;
+            await sock.sendMessage(remoteJid, { text: askMsg });
+            pushMessage(remoteJid, 'user', text);
+            pushMessage(remoteJid, 'assistant', askMsg);
+            continue;
+          }
+        }
+
+        if (isYieldIntent) {
+          const crop = parseCropName(text) || (mem.lastPlant?.commonName) || null;
+          if (crop && farmSizeFromMsg) {
+            // ✅ Both present in first message — estimate immediately
+            await sock.sendMessage(remoteJid, {
+              text: `📊 Estimating yield for *${crop}* on *${farmSizeFromMsg.size} ${farmSizeFromMsg.unit}(s)*...`,
+            });
+            await sock.sendPresenceUpdate('composing', remoteJid);
+            const estimate = await estimateCropYield({ crop, farmSize: farmSizeFromMsg.size, farmSizeUnit: farmSizeFromMsg.unit, lang });
+            const replyText = estimate || "Sorry, I couldn't generate the estimate right now. Please try again.";
+            await sock.sendMessage(remoteJid, { text: replyText });
+            pushMessage(remoteJid, 'user', text);
+            pushMessage(remoteJid, 'assistant', replyText);
+            continue;
+          } else if (crop && !farmSizeFromMsg) {
+            // Crop known, size missing — ask and save pending
+            setMemory(remoteJid, { pendingYield: { crop } });
+            const askMsg =
+              lang === 'ha' ? `📏 Don ƙididdige amfanin gonar *${crop}*, don Allah faɗa mini girman gonarka (misali: "2 hectares", "1 acre", "4 plots").`
+              : lang === 'ig' ? `📏 Iji nwee ike ịkọwapụta ọrịre *${crop}*, biko gwa m nha ugbo gị (dịka: "2 hectares", "1 acre", "4 plots").`
+              : lang === 'yo' ? `📏 Láti ṣe ìṣirò àmọ̀nà *${crop}*, jọwọ sọ fún mi ìwọ̀n oko rẹ (fún àpẹẹrẹ: "2 hectares", "1 acre", "4 plots").`
+              : `📏 To estimate your *${crop}* yield, please tell me your farm size (e.g. "2 hectares", "1 acre", "4 plots").`;
+            await sock.sendMessage(remoteJid, { text: askMsg });
+            pushMessage(remoteJid, 'user', text);
+            pushMessage(remoteJid, 'assistant', askMsg);
+            continue;
+          } else {
+            // Neither crop nor size — ask for both and save pending
+            setMemory(remoteJid, { pendingYield: {} });
+            const askMsg =
+              lang === 'ha' ? `🌾 Don ƙididdige amfanin gona, faɗa mini: menene amfanin gonarka da girman gonarka? (misali: "Masara, 2 hectares")`
+              : lang === 'ig' ? `🌾 Iji nwee ike ịkọwapụta ọrịre, gwa m: gịnị bụ ihe ọ na-eto na ubi gị na nha ubi gị? (dịka: "Ọka, 2 hectares")`
+              : lang === 'yo' ? `🌾 Láti ṣe ìṣirò àmọ̀nà, jọwọ sọ fún mi: kíni irúgbìn rẹ àti ìwọ̀n oko rẹ? (fún àpẹẹrẹ: "Àgbàdo, 2 hectares")`
+              : `🌾 To estimate your crop yield, please tell me: what crop are you growing and what is your farm size? (e.g. "Maize, 2 hectares" or "Tomato, 1 acre")`;
+            await sock.sendMessage(remoteJid, { text: askMsg });
+            pushMessage(remoteJid, 'user', text);
+            pushMessage(remoteJid, 'assistant', askMsg);
+            continue;
+          }
+        }
+
+        // ── Feature 3: Fertilizer & Treatment Recommendations ─────────────
+        if (FERTILIZER_REGEX.test(text)) {
+          const crop =
+            parseCropName(text) ||
+            mem.lastPlant?.commonName ||
+            mem.lastPlant?.scientificName ||
+            null;
+
+          if (crop) {
+            await sock.sendMessage(remoteJid, {
+              text: `🧪 Looking up fertilizer and treatment recommendations for *${crop}*...`,
+            });
+            await sock.sendPresenceUpdate('composing', remoteJid);
+            const advice = await generateFertilizerAdvice({ cropOrPlant: crop, question: text });
+            const replyText = advice || "Sorry, I couldn't fetch the recommendations right now. Please try again.";
+            await sock.sendMessage(remoteJid, { text: replyText });
+            pushMessage(remoteJid, 'user', text);
+            pushMessage(remoteJid, 'assistant', replyText);
+            continue;
+          }
+          // If no crop found, fall through to general Q&A which handles it naturally
+        }
+
+        // ── General plant/agronomy Q&A ────────────────────────────────────
         // Prepend last plant context and detected language hint for the AI
         let questionWithContext = `[User language: ${lang}]\n` + text;
         if (mem.lastPlant) {
