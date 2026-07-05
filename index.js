@@ -135,6 +135,15 @@ function parseCropName(text) {
   return null;
 }
 
+// ---------- WhatsApp formatting sanitizer ----------
+// LLMs sometimes produce **double-asterisk** markdown bold even when instructed
+// not to. WhatsApp only renders *single-asterisk* bold, so we strip doubles here.
+function sanitizeForWhatsApp(text) {
+  if (!text) return text;
+  // **bold** → *bold*  (non-greedy, handles multi-word phrases)
+  return text.replace(/\*\*([^*]+)\*\*/g, '*$1*');
+}
+
 function ask(question) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   return new Promise((resolve) => rl.question(question, (answer) => {
@@ -419,7 +428,7 @@ async function startBot() {
             const report = await generateDiseaseReport({ diseases, plantInfo });
 
             if (report) {
-              await sock.sendMessage(remoteJid, { text: report });
+              await sock.sendMessage(remoteJid, { text: sanitizeForWhatsApp(report) });
             } else {
               // Fallback to basic formatted result
               const diseaseText = formatDiseaseResult(diseases);
@@ -455,7 +464,7 @@ async function startBot() {
           });
 
           const descText = description
-            ? `📖 *About this plant:*\n\n${description.text}`
+            ? `📖 *About this plant:*\n\n${sanitizeForWhatsApp(description.text)}`
             : "Couldn't fetch extra details right now, but the identification above is solid. Try again later for the full description.";
 
           await sock.sendMessage(remoteJid, { text: descText });
@@ -502,7 +511,7 @@ async function startBot() {
           }
 
           const answer = await answerQuestion(questionWithContext, mem.messages);
-          const replyText = answer ||
+          const replyText = sanitizeForWhatsApp(answer) ||
             "I'm only able to help with plant-related questions. Send me a plant photo to identify it, or ask me anything about plants, gardening, or plant care!";
 
           // Reply as a voice note; fall back to text if TTS fails
@@ -568,7 +577,7 @@ async function startBot() {
             });
             await sock.sendPresenceUpdate('composing', remoteJid);
             const estimate = await estimateCropYield({ crop: resolvedCrop, farmSize: resolvedSize.size, farmSizeUnit: resolvedSize.unit, lang });
-            const replyText = estimate || "Sorry, I couldn't generate the estimate right now. Please try again.";
+            const replyText = sanitizeForWhatsApp(estimate) || "Sorry, I couldn't generate the estimate right now. Please try again.";
             await sock.sendMessage(remoteJid, { text: replyText });
             pushMessage(remoteJid, 'user', text);
             pushMessage(remoteJid, 'assistant', replyText);
@@ -609,7 +618,7 @@ async function startBot() {
             });
             await sock.sendPresenceUpdate('composing', remoteJid);
             const estimate = await estimateCropYield({ crop, farmSize: farmSizeFromMsg.size, farmSizeUnit: farmSizeFromMsg.unit, lang });
-            const replyText = estimate || "Sorry, I couldn't generate the estimate right now. Please try again.";
+            const replyText = sanitizeForWhatsApp(estimate) || "Sorry, I couldn't generate the estimate right now. Please try again.";
             await sock.sendMessage(remoteJid, { text: replyText });
             pushMessage(remoteJid, 'user', text);
             pushMessage(remoteJid, 'assistant', replyText);
@@ -655,7 +664,7 @@ async function startBot() {
             });
             await sock.sendPresenceUpdate('composing', remoteJid);
             const advice = await generateFertilizerAdvice({ cropOrPlant: crop, question: text });
-            const replyText = advice || "Sorry, I couldn't fetch the recommendations right now. Please try again.";
+            const replyText = sanitizeForWhatsApp(advice) || "Sorry, I couldn't fetch the recommendations right now. Please try again.";
             await sock.sendMessage(remoteJid, { text: replyText });
             pushMessage(remoteJid, 'user', text);
             pushMessage(remoteJid, 'assistant', replyText);
@@ -675,7 +684,7 @@ async function startBot() {
         }
 
         const answer = await answerQuestion(questionWithContext, mem.messages);
-        const replyText = answer ||
+        const replyText = sanitizeForWhatsApp(answer) ||
           (lang === 'ha' ? 'Zan iya taimaka ne kawai game da tsire-tsire da noma. 🌿 Aika mini hoto na tsire ko tambaya ta noma!'
           : lang === 'ig' ? 'Nwere ike isi m aka naanị n\'ihe gbasara osisi na ọrụ ugbo. 🌿 Ziga foto osisi ma ọ bụ ajụjụ ugbo!'
           : lang === 'yo' ? 'Mo lè ràn ọ́ lọ́wọ́ nínú ìbéèrè nípa ewéko àti iṣẹ́ àgbẹ̀ nìkan. 🌿 Fi fọto ewéko ránṣẹ́ tàbí béèrè ìbéèrè!'

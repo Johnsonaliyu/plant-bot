@@ -6,6 +6,9 @@ const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
 const NVIDIA_API_KEY = process.env.NVIDIA_API_KEY;
 const NVIDIA_MODEL = process.env.NVIDIA_MODEL || 'meta/llama-3.1-70b-instruct';
 
+// WhatsApp formatting rule injected into every prompt
+const WA_FORMAT_RULE = `\nFORMATTING (critical): This response will be sent via WhatsApp. WhatsApp uses *single asterisks* for bold — NEVER use **double asterisks**. Do not use markdown headers (###). Bullet points with • or - are fine.`;
+
 const SYSTEM_PROMPT = `You are a knowledgeable botanist writing short, friendly plant profiles for a WhatsApp bot.
 Given a plant's scientific name, common name, and family, write a concise description covering:
 - A 1-2 sentence overview of what the plant is
@@ -14,7 +17,7 @@ Given a plant's scientific name, common name, and family, write a concise descri
 - One basic care or growing tip if it's commonly cultivated
 
 Keep it under 120 words total. Do not use markdown headers. Write in plain conversational sentences,
-short paragraphs are fine. If you are not confident about a specific fact, omit it rather than guessing.`;
+short paragraphs are fine. If you are not confident about a specific fact, omit it rather than guessing.${WA_FORMAT_RULE}`;
 
 function buildUserPrompt({ scientificName, commonName, family, genus }) {
   return (
@@ -98,7 +101,7 @@ Content rules:
 - Answer any question that touches on plants, crops, farming, soil, or agriculture — even indirectly (e.g. "What are the health benefits of rice?" or "How do I grow yam?"). Be accurate and helpful. Keep responses concise (under 200 words).
 - Where relevant, tailor advice to Nigerian and West African farming conditions, climate zones, and locally available inputs — but only where it genuinely applies.
 - If the question is clearly unrelated to plants, crops, soil, farming, or agriculture (e.g. politics, sports, finance), reply in the user's language with a polite decline and invite them to ask a plant or farming question.
-- Do not use markdown headers. Short paragraphs are fine.`;
+- Do not use markdown headers. Short paragraphs are fine.${WA_FORMAT_RULE}`;
 
 const DISEASE_REPORT_SYSTEM_PROMPT = `You are an expert plant pathologist and agricultural extension officer writing reports for Nigerian farmers and gardeners via a WhatsApp bot called Flora Scan.
 
@@ -122,7 +125,7 @@ Rules:
 - Preserve accurate plant origin and scientific information; do not falsely localise a plant's native region.
 - Do not use markdown headers or horizontal rules — only the bold labels shown above.
 - Write in plain, friendly language a smallholder farmer can understand.
-- Total response should be under 350 words.`;
+- Total response should be under 350 words.${WA_FORMAT_RULE}`;
 
 async function callAI(messages, maxTokens = 300) {
   try {
@@ -278,7 +281,7 @@ Structure your response using ONLY these exact bold labels:
 [Brief timeline: when to apply fertilizer (at planting, 3 WAP, 6 WAP, etc.) and spraying frequency for disease/pest control.]
 
 Language rule: Detect the user's language (English, Hausa, Igbo, Yoruba) and reply in that same language.
-Rules: Keep each section concise and actionable. Focus on inputs available in Nigerian markets. Total response under 320 words. Do not use markdown headers — only the bold labels shown.`;
+Rules: Keep each section concise and actionable. Focus on inputs available in Nigerian markets. Total response under 320 words. Do not use markdown headers — only the bold labels shown.${WA_FORMAT_RULE}`;
 
 /**
  * Generates specific fertilizer and treatment recommendations for a crop/plant.
@@ -331,7 +334,7 @@ Briefly note price volatility and peak harvest season effect.]
 [2–3 specific, practical tips for this crop in Nigerian conditions — improved variety names, optimal planting date, key fertilizer timing, etc.]
 
 Language rule: Detect the user's language (English, Hausa, Igbo, Yoruba) and reply in that same language.
-Rules: Use realistic 2024–2025 Nigerian market prices and yield data. Acknowledge price volatility. Keep total response under 420 words. Do not use markdown headers — only the bold labels shown.`;
+Rules: Use realistic 2024–2025 Nigerian market prices and yield data. Acknowledge price volatility. Keep total response under 420 words. Do not use markdown headers — only the bold labels shown.${WA_FORMAT_RULE}`;
 
 /**
  * Generates a yield, cost, and profit estimate for a given crop and farm size.
