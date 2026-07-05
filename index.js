@@ -286,6 +286,9 @@ function pushMessage(jid, role, content) {
 }
 
 // ---------- WhatsApp bot ----------
+const processedMessages = new Set();
+const MAX_PROCESSED_CACHE = 500;
+
 let isRestarting = false;
 
 async function startBot() {
@@ -354,6 +357,14 @@ async function startBot() {
     if (type !== 'notify') return;
 
     for (const msg of messages) {
+      const msgId = msg.key.id;
+      if (processedMessages.has(msgId)) continue;
+      processedMessages.add(msgId);
+      if (processedMessages.size > MAX_PROCESSED_CACHE) {
+        const oldest = processedMessages.values().next().value;
+        processedMessages.delete(oldest);
+      }
+
       try {
         if (!msg.message || msg.key.fromMe) continue;
 
@@ -696,7 +707,7 @@ async function startBot() {
         pushMessage(remoteJid, 'user', text);
         pushMessage(remoteJid, 'assistant', replyText);
       } catch (err) {
-        console.error('Error handling message:', err.message);
+        console.error('Error handling message:', err.response?.status, err.config?.url || err.message);
         try {
           await sock.sendMessage(msg.key.remoteJid, {
             text: '⚠️ Something went wrong identifying that plant. Please try again with a clearer photo.',
