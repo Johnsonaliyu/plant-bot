@@ -10,6 +10,7 @@ const {
 const pino = require('pino');
 const axios = require('axios');
 const FormData = require('form-data');
+const qrcodeTerminal = require('qrcode-terminal');
 const { generateDescription, answerQuestion, generateDiseaseReport, transcribeAudio, generateFertilizerAdvice, estimateCropYield } = require('./ai');
 const { textToSpeech } = require('./tts');
 
@@ -291,7 +292,7 @@ async function startBot() {
   const sock = makeWASocket({
     auth: state,
     logger,
-    printQRInTerminal: true,
+    printQRInTerminal: false,
     browser: Browsers.macOS('Chrome'),
     keepAliveIntervalMs: 15000,  // send keep-alive pings every 15s
     connectTimeoutMs: 20000,     // give the handshake 20s before giving up
@@ -301,8 +302,12 @@ async function startBot() {
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
-      console.log('\n📱 Scan the QR code above with WhatsApp:');
-      console.log('   Open WhatsApp > ... > Linked Devices > Link a Device\n');
+      console.log('\n==============================');
+      console.log('📱 Scan this QR code with WhatsApp:');
+      console.log('   Open WhatsApp > ... > Linked Devices > Link a Device');
+      console.log('==============================\n');
+      qrcodeTerminal.generate(qr, { small: true });
+      console.log('\n==============================\n');
     }
 
     if (connection === 'open') {
