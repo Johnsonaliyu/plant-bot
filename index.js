@@ -324,8 +324,8 @@ async function startBot() {
       process.exit(1);
     }
 
-    // Request pairing code 3s after socket is created — gives the WS handshake
-    // enough time to complete while still firing before a short-lived connection drops.
+    // Request pairing code 1s after socket is created — the pre-auth WS connection
+    // only stays alive for ~2s, so we must request within that window.
     pairingTimer = setTimeout(async () => {
       if (pairingRequested) return;
       pairingRequested = true;
@@ -340,7 +340,7 @@ async function startBot() {
         console.error('Failed to request pairing code:', err.message);
         pairingRequested = false; // allow retry on next reconnect
       }
-    }, 3000);
+    }, 1000);
   }
 
   sock.ev.on('connection.update', async (update) => {
