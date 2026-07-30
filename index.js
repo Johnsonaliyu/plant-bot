@@ -10,13 +10,11 @@ const {
 const pino = require('pino');
 const axios = require('axios');
 const FormData = require('form-data');
-const readline = require('readline');
 const { generateDescription, answerQuestion, generateDiseaseReport, transcribeAudio, generateFertilizerAdvice, estimateCropYield } = require('./ai');
 const { textToSpeech } = require('./tts');
 
 const PLANTNET_API_KEY = process.env.PLANTNET_API_KEY;
 const PLANTNET_PROJECT = process.env.PLANTNET_PROJECT || 'all';
-const WHATSAPP_PHONE_NUMBER = process.env.WHATSAPP_PHONE_NUMBER;
 
 if (!PLANTNET_API_KEY) {
   console.error('Missing PLANTNET_API_KEY in .env — get one free at https://my.plantnet.org/');
@@ -144,13 +142,6 @@ function sanitizeForWhatsApp(text) {
   return text.replace(/\*\*([^*]+)\*\*/g, '*$1*');
 }
 
-function ask(question) {
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  return new Promise((resolve) => rl.question(question, (answer) => {
-    rl.close();
-    resolve(answer.trim());
-  }));
-}
 
 // ---------- PlantNet identification ----------
 async function identifyPlant(imageBuffer) {
@@ -290,7 +281,6 @@ const processedMessages = new Set();
 const MAX_PROCESSED_CACHE = 500;
 
 let isRestarting = false;
-let pairingRequested = false; // module-level so it survives reconnects
 let reconnectDelay = 5000;   // starts at 5s, backs off to avoid rate-limiting
 
 async function startBot() {
@@ -301,55 +291,19 @@ async function startBot() {
   const sock = makeWASocket({
     auth: state,
     logger,
-    printQRInTerminal: false,
+    printQRInTerminal: true,
     browser: Browsers.macOS('Chrome'),
     keepAliveIntervalMs: 15000,  // send keep-alive pings every 15s
     connectTimeoutMs: 20000,     // give the handshake 20s before giving up
   });
 
-  // ---- Pairing code login (instead of QR) ----
-  let phoneNumber = null;
-  let pairingTimer = null;
-
-  if (!sock.authState.creds.registered) {
-    phoneNumber = WHATSAPP_PHONE_NUMBER;
-    if (!phoneNumber) {
-      phoneNumber = await ask(
-        'Enter your WhatsApp number with country code, digits only (e.g. 2348012345678): '
-      );
-    }
-    phoneNumber = phoneNumber.replace(/[^0-9]/g, '');
-    if (phoneNumber.length < 7) {
-      console.error('Phone number looks invalid. Please restart and enter a valid number.');
-      process.exit(1);
-    }
-
-    // Request pairing code 1s after socket is created — the pre-auth WS connection
-    // only stays alive for ~2s, so we must request within that window.
-    pairingTimer = setTimeout(async () => {
-      if (pairingRequested) return;
-      pairingRequested = true;
-      try {
-        const code = await sock.requestPairingCode(phoneNumber);
-        console.log('\n==============================');
-        console.log(`Phone number used: +${phoneNumber}`);
-        console.log(`Your WhatsApp pairing code: ${code}`);
-        console.log('Steps:');
-        console.log('1. Open WhatsApp on the phone with the number above');
-        console.log('2. Tap ... > Linked Devices > Link a Device');
-        console.log('3. Tap "Link with phone number instead"');
-        console.log(`4. Enter exactly: +${phoneNumber}`);
-        console.log('5. Type the pairing code shown above');
-        console.log('==============================\n');
-      } catch (err) {
-        console.error('Failed to request pairing code:', err.message);
-        pairingRequested = false; // allow retry on next reconnect
-      }
-    }, 1000);
-  }
-
   sock.ev.on('connection.update', async (update) => {
-    const { connection, lastDisconnect } = update;
+    const { connection, lastDisconnect, qr } = update;
+
+    if (qr) {
+      console.log('\n📱 Scan the QR code above with WhatsApp:');
+      console.log('   Open WhatsApp > ... > Linked Devices > Link a Device\n');
+    }
 
     if (connection === 'open') {
       reconnectDelay = 5000; // reset backoff on successful connection
@@ -357,14 +311,6 @@ async function startBot() {
     }
 
     if (connection === 'close') {
-      // Cancel any pending pairing timer — the socket is gone
-      if (pairingTimer) { clearTimeout(pairingTimer); pairingTimer = null; }
-
-      // Allow a fresh code on the next connect attempt if not yet registered
-      if (!sock.authState.creds.registered) {
-        pairingRequested = false;
-      }
-
       const shouldReconnect =
         lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
       console.log('Connection closed.', shouldReconnect ? `Reconnecting in ${reconnectDelay / 1000}s...` : 'Logged out.');
