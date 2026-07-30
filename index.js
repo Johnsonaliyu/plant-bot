@@ -332,9 +332,14 @@ async function startBot() {
       try {
         const code = await sock.requestPairingCode(phoneNumber);
         console.log('\n==============================');
+        console.log(`Phone number used: +${phoneNumber}`);
         console.log(`Your WhatsApp pairing code: ${code}`);
-        console.log('Open WhatsApp > Linked Devices > Link a Device > Link with phone number instead');
-        console.log('Enter this code there.');
+        console.log('Steps:');
+        console.log('1. Open WhatsApp on the phone with the number above');
+        console.log('2. Tap ... > Linked Devices > Link a Device');
+        console.log('3. Tap "Link with phone number instead"');
+        console.log(`4. Enter exactly: +${phoneNumber}`);
+        console.log('5. Type the pairing code shown above');
         console.log('==============================\n');
       } catch (err) {
         console.error('Failed to request pairing code:', err.message);
