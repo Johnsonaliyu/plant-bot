@@ -10,7 +10,8 @@ const {
 const pino = require('pino');
 const axios = require('axios');
 const FormData = require('form-data');
-const qrcodeTerminal = require('qrcode-terminal');
+const express = require('express');
+const QRCode = require('qrcode');
 const { generateDescription, answerQuestion, generateDiseaseReport, transcribeAudio, generateFertilizerAdvice, estimateCropYield } = require('./ai');
 const { textToSpeech } = require('./tts');
 
@@ -277,6 +278,35 @@ function pushMessage(jid, role, content) {
   setMemory(jid, { messages });
 }
 
+// ---------- QR web server ----------
+let currentQR = null;
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.get('/', (req, res) => {
+  if (!currentQR) {
+    return res.send(`<!DOCTYPE html><html><body style="font-family:sans-serif;text-align:center;padding:40px">
+      <h2>⏳ Waiting for QR code...</h2>
+      <p>The bot is connecting. Refresh this page in a few seconds.</p>
+      <script>setTimeout(()=>location.reload(),3000)</script>
+    </body></html>`);
+  }
+  QRCode.toDataURL(currentQR, { width: 400 }, (err, url) => {
+    if (err) return res.send('Error generating QR: ' + err.message);
+    res.send(`<!DOCTYPE html><html><body style="font-family:sans-serif;text-align:center;padding:40px">
+      <h2>📱 Scan with WhatsApp</h2>
+      <p>Open WhatsApp → ⋮ → Linked Devices → Link a Device → scan below</p>
+      <img src="${url}" style="border:4px solid #25D366;border-radius:12px"/>
+      <p style="color:gray;font-size:13px">QR refreshes every ~20s. Page auto-reloads.</p>
+      <script>setTimeout(()=>location.reload(),20000)</script>
+    </body></html>`);
+  });
+});
+
+app.listen(PORT, () => {
+  console.log(`\n🌐 QR page running — open your Railway public URL in a browser to scan.\n`);
+});
+
 // ---------- WhatsApp bot ----------
 const processedMessages = new Set();
 const MAX_PROCESSED_CACHE = 500;
@@ -302,15 +332,12 @@ async function startBot() {
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
-      console.log('\n==============================');
-      console.log('📱 Scan this QR code with WhatsApp:');
-      console.log('   Open WhatsApp > ... > Linked Devices > Link a Device');
-      console.log('==============================\n');
-      qrcodeTerminal.generate(qr, { small: true });
-      console.log('\n==============================\n');
+      currentQR = qr;
+      console.log('📱 New QR code ready — open your Railway public URL in a browser to scan it.');
     }
 
     if (connection === 'open') {
+      currentQR = null;
       reconnectDelay = 5000; // reset backoff on successful connection
       console.log('✅ WhatsApp bot connected and ready.');
     }
