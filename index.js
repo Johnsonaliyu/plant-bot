@@ -305,8 +305,10 @@ async function startBot() {
   });
 
   // ---- Pairing code login (instead of QR) ----
+  // Resolve phone number once at startup (before any connection events)
+  let phoneNumber = null;
   if (!sock.authState.creds.registered) {
-    let phoneNumber = WHATSAPP_PHONE_NUMBER;
+    phoneNumber = WHATSAPP_PHONE_NUMBER;
     if (!phoneNumber) {
       phoneNumber = await ask(
         'Enter your WhatsApp number with country code, digits only (e.g. 2348012345678): '
@@ -317,28 +319,36 @@ async function startBot() {
       console.error('Phone number looks invalid. Please restart and enter a valid number.');
       process.exit(1);
     }
-
-    // Request pairing code after the WebSocket connection is established
-    setTimeout(async () => {
-      if (pairingRequested) return;
-      pairingRequested = true;
-      try {
-        const code = await sock.requestPairingCode(phoneNumber);
-        console.log('\n==============================');
-        console.log(`Your WhatsApp pairing code: ${code}`);
-        console.log('Open WhatsApp > Linked Devices > Link a Device > Link with phone number instead');
-        console.log('Enter this code there.');
-        console.log('==============================\n');
-      } catch (err) {
-        console.error('Failed to request pairing code:', err.message);
-      }
-    }, 5000);
   }
 
-  sock.ev.on('connection.update', (update) => {
+  sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect } = update;
 
+    if (connection === 'open') {
+      console.log('✅ WhatsApp bot connected and ready.');
+
+      // Request pairing code only once the connection is confirmed open
+      if (phoneNumber && !pairingRequested) {
+        pairingRequested = true;
+        try {
+          const code = await sock.requestPairingCode(phoneNumber);
+          console.log('\n==============================');
+          console.log(`Your WhatsApp pairing code: ${code}`);
+          console.log('Open WhatsApp > Linked Devices > Link a Device > Link with phone number instead');
+          console.log('Enter this code there.');
+          console.log('==============================\n');
+        } catch (err) {
+          console.error('Failed to request pairing code:', err.message);
+          pairingRequested = false; // allow retry on next open connection
+        }
+      }
+    }
+
     if (connection === 'close') {
+      // If not yet registered, reset so the next open connection shows a fresh code
+      if (!sock.authState.creds.registered) {
+        pairingRequested = false;
+      }
       const shouldReconnect =
         lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
       console.log('Connection closed.', shouldReconnect ? 'Reconnecting...' : 'Logged out.');
@@ -346,8 +356,6 @@ async function startBot() {
         isRestarting = true;
         startBot().finally(() => { isRestarting = false; });
       }
-    } else if (connection === 'open') {
-      console.log('✅ WhatsApp bot connected and ready.');
     }
   });
 
