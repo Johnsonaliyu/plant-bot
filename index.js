@@ -291,6 +291,7 @@ const MAX_PROCESSED_CACHE = 500;
 
 let isRestarting = false;
 let pairingRequested = false; // module-level so it survives reconnects
+let reconnectDelay = 5000;   // starts at 5s, backs off to avoid rate-limiting
 
 async function startBot() {
   const { state, saveCreds } = await useMultiFileAuthState('auth_info');
@@ -302,11 +303,14 @@ async function startBot() {
     logger,
     printQRInTerminal: false,
     browser: Browsers.macOS('Chrome'),
+    keepAliveIntervalMs: 15000,  // send keep-alive pings every 15s
+    connectTimeoutMs: 20000,     // give the handshake 20s before giving up
   });
 
   // ---- Pairing code login (instead of QR) ----
-  // Resolve phone number once at startup (before any connection events)
   let phoneNumber = null;
+  let pairingTimer = null;
+
   if (!sock.authState.creds.registered) {
     phoneNumber = WHATSAPP_PHONE_NUMBER;
     if (!phoneNumber) {
@@ -319,42 +323,54 @@ async function startBot() {
       console.error('Phone number looks invalid. Please restart and enter a valid number.');
       process.exit(1);
     }
+
+    // Request pairing code 3s after socket is created — gives the WS handshake
+    // enough time to complete while still firing before a short-lived connection drops.
+    pairingTimer = setTimeout(async () => {
+      if (pairingRequested) return;
+      pairingRequested = true;
+      try {
+        const code = await sock.requestPairingCode(phoneNumber);
+        console.log('\n==============================');
+        console.log(`Your WhatsApp pairing code: ${code}`);
+        console.log('Open WhatsApp > Linked Devices > Link a Device > Link with phone number instead');
+        console.log('Enter this code there.');
+        console.log('==============================\n');
+      } catch (err) {
+        console.error('Failed to request pairing code:', err.message);
+        pairingRequested = false; // allow retry on next reconnect
+      }
+    }, 3000);
   }
 
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect } = update;
 
     if (connection === 'open') {
+      reconnectDelay = 5000; // reset backoff on successful connection
       console.log('✅ WhatsApp bot connected and ready.');
-
-      // Request pairing code only once the connection is confirmed open
-      if (phoneNumber && !pairingRequested) {
-        pairingRequested = true;
-        try {
-          const code = await sock.requestPairingCode(phoneNumber);
-          console.log('\n==============================');
-          console.log(`Your WhatsApp pairing code: ${code}`);
-          console.log('Open WhatsApp > Linked Devices > Link a Device > Link with phone number instead');
-          console.log('Enter this code there.');
-          console.log('==============================\n');
-        } catch (err) {
-          console.error('Failed to request pairing code:', err.message);
-          pairingRequested = false; // allow retry on next open connection
-        }
-      }
     }
 
     if (connection === 'close') {
-      // If not yet registered, reset so the next open connection shows a fresh code
+      // Cancel any pending pairing timer — the socket is gone
+      if (pairingTimer) { clearTimeout(pairingTimer); pairingTimer = null; }
+
+      // Allow a fresh code on the next connect attempt if not yet registered
       if (!sock.authState.creds.registered) {
         pairingRequested = false;
       }
+
       const shouldReconnect =
         lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-      console.log('Connection closed.', shouldReconnect ? 'Reconnecting...' : 'Logged out.');
+      console.log('Connection closed.', shouldReconnect ? `Reconnecting in ${reconnectDelay / 1000}s...` : 'Logged out.');
+
       if (shouldReconnect && !isRestarting) {
         isRestarting = true;
-        startBot().finally(() => { isRestarting = false; });
+        const delay = reconnectDelay;
+        reconnectDelay = Math.min(reconnectDelay * 1.5, 30000); // back off up to 30s
+        setTimeout(() => {
+          startBot().finally(() => { isRestarting = false; });
+        }, delay);
       }
     }
   });
