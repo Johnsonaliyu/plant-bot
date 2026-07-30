@@ -290,6 +290,7 @@ const processedMessages = new Set();
 const MAX_PROCESSED_CACHE = 500;
 
 let isRestarting = false;
+let pairingRequested = false; // module-level so it survives reconnects
 
 async function startBot() {
   const { state, saveCreds } = await useMultiFileAuthState('auth_info');
@@ -304,7 +305,6 @@ async function startBot() {
   });
 
   // ---- Pairing code login (instead of QR) ----
-  let pairingRequested = false;
   if (!sock.authState.creds.registered) {
     let phoneNumber = WHATSAPP_PHONE_NUMBER;
     if (!phoneNumber) {
